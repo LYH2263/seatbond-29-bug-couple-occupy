@@ -70,6 +70,19 @@ class ConflictOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class HoldConflictOut(BaseModel):
+    """409 body for a failed hold — mirrors the ConflictLog row written for the
+    same request, so the locking page and the conflicts page tell the same story.
+
+    Delivered as ``{"detail": HoldConflictOut(...)}`` (FastAPI error shape)."""
+
+    conflict_id: int
+    showtime_id: int
+    party_size: int
+    kind: str  # no_contiguous | half_pair | overlap
+    reason: str
+
+
 class SeatMapCell(BaseModel):
     row: int
     col: int

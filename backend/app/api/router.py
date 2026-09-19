@@ -11,6 +11,7 @@ from app.schemas.schemas import (
     CouplePairOut,
     CouplePairRequest,
     HallOut,
+    HoldConflictOut,
     HoldOut,
     HoldRequest,
     SeatMapCell,
@@ -156,7 +157,7 @@ def seatmap(showtime_id: int, db: Session = Depends(get_db)):
     holds = db.scalars(select(SeatHold).where(SeatHold.showtime_id == showtime_id)).all()
     occupied: set[tuple[int, int]] = set()
     for h in holds:
-        for c in range(h.start_col, h.end_col):
+        for c in range(h.start_col, h.end_col + 1):
             occupied.add((h.row, c))
     pair_cells: dict[tuple[int, int], int] = {}
     for p in db.scalars(select(CouplePair).where(CouplePair.hall_id == hall.id)).all():
@@ -195,9 +196,25 @@ def list_conflicts(db: Session = Depends(get_db)):
     return db.scalars(select(ConflictLog).order_by(ConflictLog.id.desc())).all()
 
 
-def _log_conflict(db: Session, showtime_id: int, party_size: int, kind: str, reason: str) -> None:
-    db.add(ConflictLog(showtime_id=showtime_id, party_size=party_size, kind=kind, reason=reason))
+def _log_conflict(db: Session, showtime_id: int, party_size: int, kind: str, reason: str) -> ConflictLog:
+    log = ConflictLog(showtime_id=showtime_id, party_size=party_size, kind=kind, reason=reason)
+    db.add(log)
     db.commit()
+    db.refresh(log)
+    return log
+
+
+def _conflict_error(log: ConflictLog) -> HTTPException:
+    """409 whose body is the same record shown on the conflicts page: same id,
+    same kind, same reason — one failed request, one consistent explanation."""
+    body = HoldConflictOut(
+        conflict_id=log.id,
+        showtime_id=log.showtime_id,
+        party_size=log.party_size,
+        kind=log.kind,
+        reason=log.reason,
+    )
+    return HTTPException(status_code=409, detail=body.model_dump())
 
 
 @api_router.post("/holds", response_model=HoldOut)
@@ -240,27 +257,27 @@ def create_hold(body: HoldRequest, db: Session = Depends(get_db)):
                 f"情侣对需整对落座：人数 {body.party_size} 在第{cut_row}排"
                 f"只剩半对可用（{cut_col}-{cut_col + 1}列）"
             )
-            _log_conflict(db, body.showtime_id, body.party_size, BondFailure.HALF_PAIR.value, reason)
-            raise HTTPException(409, "无足够连续空座")
-        _log_conflict(
+            log = _log_conflict(db, body.showtime_id, body.party_size, BondFailure.HALF_PAIR.value, reason)
+            raise _conflict_error(log)
+        log = _log_conflict(
             db,
             body.showtime_id,
             body.party_size,
             BondFailure.NO_CONTIGUOUS.value,
             f"无足够连续空座（人数 {body.party_size}）",
         )
-        raise HTTPException(409, "无足够连续空座")
+        raise _conflict_error(log)
 
     hits = conflicts_with(holds, block)
     if hits:
-        _log_conflict(
+        log = _log_conflict(
             db,
             body.showtime_id,
             body.party_size,
             "overlap",
             f"与既有持座重叠：第{hits[0].row}排 {hits[0].start_col}-{hits[0].end_col}",
         )
-        raise HTTPException(409, "与既有持座冲突")
+        raise _conflict_error(log)
 
     couple_cols = sorted(
         p.start_col

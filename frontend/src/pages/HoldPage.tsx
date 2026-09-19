@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
+import { kindLabel } from "../api/conflict";
 
 type Show = { id: number; film_title: string; hall_name?: string };
 type Hold = {
@@ -10,6 +11,13 @@ type Hold = {
   end_col: number;
   party_size: number;
   couple_cols: number[];
+};
+type FailedHold = {
+  conflictId: number;
+  showtimeId: number;
+  partySize: number;
+  kind: string;
+  reason: string;
 };
 
 function coupleLabel(h: Hold): string {
@@ -23,7 +31,7 @@ export default function HoldPage() {
   const [party, setParty] = useState(3);
   const [prefRow, setPrefRow] = useState("");
   const [msg, setMsg] = useState("");
-  const [err, setErr] = useState("");
+  const [failed, setFailed] = useState<FailedHold | null>(null);
   const [last, setLast] = useState<Hold | null>(null);
 
   useEffect(() => {
@@ -35,7 +43,7 @@ export default function HoldPage() {
 
   async function submit() {
     setMsg("");
-    setErr("");
+    setFailed(null);
     try {
       const body: Record<string, unknown> = { showtime_id: sid, party_size: party };
       if (prefRow) body.preferred_row = Number(prefRow);
@@ -43,7 +51,24 @@ export default function HoldPage() {
       setLast(hold);
       setMsg(`已锁座 ${hold.order_code}：第${hold.row}排 ${hold.start_col}-${hold.end_col}${coupleLabel(hold)}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (e instanceof ApiError && e.conflict) {
+        const c = e.conflict;
+        setFailed({
+          conflictId: c.conflict_id,
+          showtimeId: c.showtime_id,
+          partySize: c.party_size,
+          kind: c.kind,
+          reason: c.reason,
+        });
+      } else {
+        setFailed({
+          conflictId: 0,
+          showtimeId: Number(sid),
+          partySize: party,
+          kind: "",
+          reason: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
   }
 
@@ -81,7 +106,20 @@ export default function HoldPage() {
         <button onClick={submit}>查找并锁连座</button>
       </div>
       {msg && <div className="ok">{msg}</div>}
-      {err && <div className="err">{err}</div>}
+      {failed && (
+        <div className="err hold-fail">
+          <span className={`kind-badge kind-${failed.kind || "unknown"}`}>
+            {failed.kind ? kindLabel(failed.kind) : "锁座失败"}
+          </span>
+          <span>{failed.reason}</span>
+          {failed.conflictId > 0 && (
+            <span className="mono hold-fail-ref">
+              场次 {failed.showtimeId} · {failed.partySize} 人 · 冲突记录 #{failed.conflictId}
+              （与「冲突」页同一笔、同一原因）
+            </span>
+          )}
+        </div>
+      )}
       {last && (
         <p className="mono">
           订单 {last.order_code} · {last.party_size} 人 · R{last.row} C{last.start_col}-{last.end_col}

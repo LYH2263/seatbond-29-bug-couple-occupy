@@ -231,6 +231,12 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .err { color: #ff8f7a; margin-top: .75rem; }
 .ok { color: #7ddea0; margin-top: .75rem; }
+.hold-fail {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem;
+  padding: .6rem .75rem; border: 1px solid #5a2a26; border-radius: 6px;
+  background: rgba(232, 93, 93, .08);
+}
+.hold-fail-ref { font-size: .82rem; opacity: .8; flex-basis: 100%; }
 .mono { font-family: "IBM Plex Mono", monospace; }
 
 .screen {
@@ -318,3 +324,4 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .kind-half_pair { color: #ffb3c8; border-color: #8a3a55; background: rgba(232, 93, 120, .12); }
 .kind-no_contiguous { color: #9fc3ea; border-color: #2a4a6e; background: rgba(42, 74, 110, .18); }
 .kind-overlap { color: #ffc98a; border-color: #8a5a2a; background: rgba(232, 150, 76, .12); }
+.kind-unknown { color: #d8c8d2; border-color: #4a3040; background: rgba(120, 100, 110, .12); }

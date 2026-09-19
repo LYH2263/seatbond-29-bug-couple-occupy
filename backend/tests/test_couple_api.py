@@ -121,3 +121,48 @@ def test_hold_skips_pair_when_not_needed(client):
     hold = res.json()
     assert (hold["start_col"], hold["end_col"]) == (1, 2)
     assert hold["couple_cols"] == []
+
+
+def test_seatmap_occupied_cells_match_hold_span_inclusive(client):
+    hall_id, st_id = _make_showtime(rows=1, cols=4, aisles="")
+    res = client.post("/api/holds", json={"showtime_id": st_id, "party_size": 4})
+    assert res.status_code == 200, res.text
+    hold = res.json()
+    assert (hold["start_col"], hold["end_col"]) == (1, 4)
+
+    cells = client.get(f"/api/seatmap/{st_id}").json()["cells"]
+    occ = {(c["row"], c["col"]) for c in cells if c["occupied"]}
+    # 占用格数必须等于列表起止列的闭区间长度（含 end_col，成对格子同亮同暗）
+    assert occ == {(1, c) for c in range(1, 5)}
+    assert len(occ) == hold["end_col"] - hold["start_col"] + 1
+
+
+def test_hold_failure_409_matches_conflict_row(client):
+    hall_id, st_id = _make_couple_hall()
+    client.post(f"/api/halls/{hall_id}/pairs", json={"row": 1, "start_col": 3})
+
+    # 半对失败：锁座页拿到的 409 与冲突页记录必须是同一笔、同一类原因
+    res = client.post("/api/holds", json={"showtime_id": st_id, "party_size": 3})
+    assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert detail["showtime_id"] == st_id
+    assert detail["party_size"] == 3
+    assert detail["kind"] == "half_pair"
+    assert "3-4" in detail["reason"] and "第1排" in detail["reason"]
+
+    rows = client.get("/api/conflicts").json()
+    same = [c for c in rows if c["id"] == detail["conflict_id"]]
+    assert len(same) == 1
+    assert same[0]["kind"] == detail["kind"] == "half_pair"
+    assert same[0]["reason"] == detail["reason"]
+    assert same[0]["showtime_id"] == detail["showtime_id"]
+    assert same[0]["party_size"] == detail["party_size"]
+
+    # 普通不足：同样可在 409 与冲突记录之间对上号
+    res = client.post("/api/holds", json={"showtime_id": st_id, "party_size": 12})
+    assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert detail["kind"] == "no_contiguous"
+    rows = client.get("/api/conflicts").json()
+    same = [c for c in rows if c["id"] == detail["conflict_id"]]
+    assert len(same) == 1 and same[0]["reason"] == detail["reason"]
