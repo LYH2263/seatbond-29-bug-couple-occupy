@@ -75,15 +75,21 @@ def test_hold_half_pair_failure_writes_distinguishable_conflict(client):
     # 人数 3：落窗 1-3 切开情侣对（3-4）→ 半对失败，原因可与普通不足区分
     res = client.post("/api/holds", json={"showtime_id": st_id, "party_size": 3})
     assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert detail["kind"] == "half_pair"
     conflicts = client.get("/api/conflicts").json()
     half = [c for c in conflicts if c["kind"] == "half_pair"]
     assert half, conflicts
     assert "3-4" in half[0]["reason"] and "第1排" in half[0]["reason"]
+    # 锁座响应与冲突记录是同一笔请求、同一类原因
+    assert detail["reason"] == half[0]["reason"]
+    assert detail["conflict_id"] == half[0]["id"]
     assert not client.get("/api/holds").json()  # 失败不得写入任何持座
 
     # 人数 12：普通连续空座不足，kind 必须可区分
     res = client.post("/api/holds", json={"showtime_id": st_id, "party_size": 12})
     assert res.status_code == 409
+    assert res.json()["detail"]["kind"] == "no_contiguous"
     kinds = {c["kind"] for c in client.get("/api/conflicts").json()}
     assert kinds == {"half_pair", "no_contiguous"}
 
@@ -109,6 +115,10 @@ def test_hold_whole_pair_success_marks_order(client):
     assert by_pos[(1, 3)]["pair_id"] is not None
     assert by_pos[(1, 4)]["pair_id"] == by_pos[(1, 3)]["pair_id"]
     assert by_pos[(1, 3)]["occupied"] and by_pos[(1, 4)]["occupied"]
+
+    # 座位图占用格数与持座区间（起止列含端点）一致
+    occupied = [c for c in cells if c["occupied"]]
+    assert len(occupied) == hold["end_col"] - hold["start_col"] + 1
 
 
 def test_hold_skips_pair_when_not_needed(client):

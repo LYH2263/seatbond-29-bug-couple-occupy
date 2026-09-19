@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { CONFLICT_KIND_LABELS } from "../labels";
 
 type Conflict = {
   id: number;
@@ -8,12 +9,6 @@ type Conflict = {
   kind: string;
   reason: string;
   created_at: string;
-};
-
-const KIND_LABELS: Record<string, string> = {
-  half_pair: "半对冲突",
-  no_contiguous: "连续空座不足",
-  overlap: "持座重叠",
 };
 
 export default function ConflictsPage() {
@@ -27,6 +22,7 @@ export default function ConflictsPage() {
       <table className="table">
         <thead>
           <tr>
+            <th>#</th>
             <th>时间</th>
             <th>场次</th>
             <th>人数</th>
@@ -37,12 +33,13 @@ export default function ConflictsPage() {
         <tbody>
           {rows.map((c) => (
             <tr key={c.id}>
+              <td className="mono">#{c.id}</td>
               <td className="mono">{new Date(c.created_at).toLocaleString()}</td>
               <td>{c.showtime_id}</td>
               <td>{c.party_size}</td>
               <td>
                 <span className={`kind-badge kind-${c.kind || "unknown"}`}>
-                  {KIND_LABELS[c.kind] ?? c.kind ?? "—"}
+                  {CONFLICT_KIND_LABELS[c.kind] ?? c.kind ?? "—"}
                 </span>
               </td>
               <td>{c.reason}</td>

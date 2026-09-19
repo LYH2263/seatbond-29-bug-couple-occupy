@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
+import { CONFLICT_KIND_LABELS } from "../labels";
 
 type Show = { id: number; film_title: string; hall_name?: string };
 type Hold = {
@@ -43,7 +44,14 @@ export default function HoldPage() {
       setLast(hold);
       setMsg(`已锁座 ${hold.order_code}：第${hold.row}排 ${hold.start_col}-${hold.end_col}${coupleLabel(hold)}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (e instanceof ApiError) {
+        // 与冲突页同一笔记录：同一类原因 + 冲突记录号
+        const kind = e.kind ? `【${CONFLICT_KIND_LABELS[e.kind] ?? e.kind}】` : "";
+        const ref = e.conflictId != null ? `（冲突记录 #${e.conflictId}）` : "";
+        setErr(`${kind}${e.message}${ref}`);
+      } else {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
     }
   }
 

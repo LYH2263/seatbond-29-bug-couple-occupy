@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -156,7 +157,9 @@ def seatmap(showtime_id: int, db: Session = Depends(get_db)):
     holds = db.scalars(select(SeatHold).where(SeatHold.showtime_id == showtime_id)).all()
     occupied: set[tuple[int, int]] = set()
     for h in holds:
-        for c in range(h.start_col, h.end_col):
+        # end_col is inclusive — every cell of the span lights up, so the map
+        # agrees with the hold list's start/end columns (pair cells included).
+        for c in range(h.start_col, h.end_col + 1):
             occupied.add((h.row, c))
     pair_cells: dict[tuple[int, int], int] = {}
     for p in db.scalars(select(CouplePair).where(CouplePair.hall_id == hall.id)).all():
@@ -195,9 +198,23 @@ def list_conflicts(db: Session = Depends(get_db)):
     return db.scalars(select(ConflictLog).order_by(ConflictLog.id.desc())).all()
 
 
-def _log_conflict(db: Session, showtime_id: int, party_size: int, kind: str, reason: str) -> None:
-    db.add(ConflictLog(showtime_id=showtime_id, party_size=party_size, kind=kind, reason=reason))
+def _log_conflict(db: Session, showtime_id: int, party_size: int, kind: str, reason: str) -> ConflictLog:
+    entry = ConflictLog(showtime_id=showtime_id, party_size=party_size, kind=kind, reason=reason)
+    db.add(entry)
     db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def _reject_hold(db: Session, showtime_id: int, party_size: int, kind: str, reason: str) -> NoReturn:
+    """Log the conflict and fail the request with the *same* kind and reason, so
+    the lock page and the conflict page always describe one request identically
+    (and the response carries the log id for cross-referencing)."""
+    entry = _log_conflict(db, showtime_id, party_size, kind, reason)
+    raise HTTPException(
+        status_code=409,
+        detail={"kind": kind, "reason": reason, "conflict_id": entry.id},
+    )
 
 
 @api_router.post("/holds", response_model=HoldOut)
@@ -236,31 +253,31 @@ def create_hold(body: HoldRequest, db: Session = Depends(get_db)):
     if block is None:
         if result.failure == BondFailure.HALF_PAIR and result.cuts:
             cut_row, cut_col = result.cuts[0]
-            reason = (
+            _reject_hold(
+                db,
+                body.showtime_id,
+                body.party_size,
+                BondFailure.HALF_PAIR.value,
                 f"情侣对需整对落座：人数 {body.party_size} 在第{cut_row}排"
-                f"只剩半对可用（{cut_col}-{cut_col + 1}列）"
+                f"只剩半对可用（{cut_col}-{cut_col + 1}列）",
             )
-            _log_conflict(db, body.showtime_id, body.party_size, BondFailure.HALF_PAIR.value, reason)
-            raise HTTPException(409, "无足够连续空座")
-        _log_conflict(
+        _reject_hold(
             db,
             body.showtime_id,
             body.party_size,
             BondFailure.NO_CONTIGUOUS.value,
             f"无足够连续空座（人数 {body.party_size}）",
         )
-        raise HTTPException(409, "无足够连续空座")
 
     hits = conflicts_with(holds, block)
     if hits:
-        _log_conflict(
+        _reject_hold(
             db,
             body.showtime_id,
             body.party_size,
             "overlap",
             f"与既有持座重叠：第{hits[0].row}排 {hits[0].start_col}-{hits[0].end_col}",
         )
-        raise HTTPException(409, "与既有持座冲突")
 
     couple_cols = sorted(
         p.start_col
